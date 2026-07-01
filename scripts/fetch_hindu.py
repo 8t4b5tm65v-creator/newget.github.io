@@ -49,8 +49,9 @@ def sanitize(content):
     return content or '<p><em>Content not available.</em></p>'
 
 
-def make_xhtml(title, page, teaser, body):
+def make_xhtml(title, page, teaser, body, chapter_file):
     """Wrap content in a minimal valid XHTML document for ebooklib."""
+    anchor = chapter_file.replace('.xhtml', '')  # e.g. "ch_0001"
     return (
         '<html xmlns="http://www.w3.org/1999/xhtml">'
         '<head>'
@@ -64,7 +65,7 @@ def make_xhtml(title, page, teaser, body):
         f'{body}'
         '<hr/>'
         '<p style="text-align:center;font-size:small;">'
-        '<a href="../article_index.xhtml">&#8592; Back to Index</a>'
+        f'<a href="../article_index.xhtml#{anchor}">&#8592; Back to Index</a>'
         '</p>'
         '</body>'
         '</html>'
@@ -106,21 +107,22 @@ def make_index_xhtml(feeds, today_str, chapter_map):
     """Page 2 — granular article index with anchored section headings and teaser previews."""
     sections_html = ''
     for section, articles in feeds.items():
-        anchor = re.sub(r'\s+', '_', section)
+        section_anchor = re.sub(r'\s+', '_', section)
         previews = ''
         for article in articles:
             fname = chapter_map[article['url']]
+            article_anchor = fname.replace('.xhtml', '')  # e.g. "ch_0001"
             teaser = article.get('teaser', '').strip()
             sentences = re.split(r'(?<=[.!?])\s+', teaser)
             preview_text = ' '.join(sentences[:2])
             previews += (
-                f'<li>'
+                f'<li id="{article_anchor}">'
                 f'<a href="{html.escape(fname)}">{html.escape(article["title"])}</a>'
                 + (f'<br/><span style="font-size:small;color:#444;">{html.escape(preview_text)}</span>' if preview_text else '')
                 + f'</li>'
             )
         sections_html += (
-            f'<h2 id="{html.escape(anchor)}">{html.escape(section)}</h2>'
+            f'<h2 id="{html.escape(section_anchor)}">{html.escape(section)}</h2>'
             f'<ul>{previews}</ul>'
         )
     return (
@@ -345,6 +347,7 @@ def build_epub(feeds, today_str, cover_url, edition='delhi'):
                 article['page'],
                 article['teaser'],
                 body,
+                f'ch_{chapter_id:04d}.xhtml',
             )
             ch.add_item(style)
             book.add_item(ch)
