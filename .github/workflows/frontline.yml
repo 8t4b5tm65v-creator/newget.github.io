@@ -5,6 +5,9 @@ on:
     # 12:00 IST on the 1st and 15th of each month = 01:30 UTC
     - cron: '30 4 1 * *'
     - cron: '30 4 15 * *'
+    - cron: '30 4 7 * *'
+    - cron: '30 4 21 * *'
+    - cron: '30 4 30 * *'
   workflow_dispatch: {}
 
 permissions:
