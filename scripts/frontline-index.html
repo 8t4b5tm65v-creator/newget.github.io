@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Frontline Magazine</title>
+  <style>
+    body { font-family: Georgia, serif; max-width: 640px; margin: 3em auto; padding: 0 1.5em; color: #222; }
+    h1 { font-size: 1.6em; border-bottom: 1px solid #ddd; padding-bottom: 0.4em; }
+    h1 span { font-size: 0.55em; color: #555; font-weight: normal; display: block; margin-top: 0.2em; }
+    .download-btn {
+      display: inline-block; margin: 1.5em 0 0.5em;
+      padding: 0.7em 1.6em; background: #1a5276; color: #fff;
+      text-decoration: none; border-radius: 4px; font-size: 1em;
+    }
+    .download-btn:hover { background: #154360; }
+    p.note { font-size: 0.85em; color: #555; margin-top: 0.4em; }
+    hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
+    a.back { font-size: 0.9em; color: #555; text-decoration: none; }
+    a.back:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <a class="back" href="https://BRDSLYR.github.io/NewsGet/">← Home</a>
+  <h1>Frontline Magazine
+    <span>Checked on the 1st and 15th of each month</span>
+  </h1>
+  <p class="note">Last checked: <strong>{{LAST_UPDATED}}</strong></p>
+
+  <a class="download-btn"
+     href="https://BRDSLYR.github.io/NewsGet/frontline/frontline-latest.epub"
+     download="Frontline - {{LAST_UPDATED}}.epub">
+    Download Latest Issue
+  </a>
+
+  <hr/>
+  <p class="note">To read on iPhone: tap the link above, then tap <strong>Share → Copy to Books</strong> (or open in your preferred EPUB reader).</p>
+  <p class="note">Note: Frontline publishes fortnightly. If a new issue has not yet appeared on their website on the 1st or 15th, the previous issue will be available here until the next check.</p>
+</body>
+</html>
