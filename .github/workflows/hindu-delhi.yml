@@ -2,8 +2,19 @@ name: Fetch The Hindu (Delhi edition)
 
 on:
   schedule:
-    # 09:00 IST daily = 03:30 UTC
-    - cron: '37 3 * * *'
+    # GitHub's `schedule` trigger is best-effort only — it is documented to be
+    # delayed or occasionally dropped during periods of high load, especially
+    # for lower-activity repos. A single daily slot means one missed/delayed
+    # run silently leaves the site a full day stale. Running several times
+    # through the morning window gives redundancy: if an earlier slot is
+    # skipped or late, a later one catches it the same day. The script itself
+    # is now idempotent/cheap to re-run (it just re-fetches whatever the
+    # latest published edition is), so extra runs cost a little CI time but
+    # cause no harm.
+    - cron: '30 2 * * *'   # 08:00 IST
+    - cron: '37 3 * * *'   # 09:07 IST (original slot)
+    - cron: '30 5 * * *'   # 11:00 IST
+    - cron: '30 9 * * *'   # 15:00 IST  (late safety net)
   workflow_dispatch: {}
 
 permissions:
@@ -20,14 +31,23 @@ jobs:
         run: pip install requests beautifulsoup4 "ebooklib==0.18" lxml
 
       - name: Fetch The Hindu (Delhi edition)
+        env:
+          TZ: Asia/Kolkata
         run: |
           mkdir -p output
-          TODAY=$(date +%Y-%m-%d)
-          DISPLAY_DATE=$(date +'%-d %b %Y')
-          echo "Fetching edition for: $TODAY"
-          python scripts/fetch_hindu.py delhi "output/hindu-delhi-${TODAY}.epub"
-          cp "output/hindu-delhi-${TODAY}.epub" output/hindu-delhi-latest.epub
+          TODAY=$(TZ=Asia/Kolkata date +%Y-%m-%d)
+          DISPLAY_DATE=$(TZ=Asia/Kolkata date +'%-d %b %Y')
+          echo "Target date (IST): $TODAY"
+          # fetch_hindu.py auto-falls-back to the most recent published edition
+          # if today's isn't up yet, and names the output after the edition
+          # date it actually found — so EDITION_FILE below may differ from
+          # $TODAY if the run happened early/late relative to publication.
+          python scripts/fetch_hindu.py delhi
+          EDITION_FILE=$(ls -t hindu-delhi-*.epub | head -1)
+          mv "$EDITION_FILE" "output/${EDITION_FILE}"
+          cp "output/${EDITION_FILE}" output/hindu-delhi-latest.epub
           sed "s/{{LAST_UPDATED}}/${DISPLAY_DATE}/" scripts/hindu-delhi-index.html > output/index.html
+          echo "Published edition file: ${EDITION_FILE}"
           ls -lh output/
 
       - name: Publish to GitHub Pages (gh-pages branch)
