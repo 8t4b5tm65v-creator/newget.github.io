@@ -8,7 +8,7 @@ import json
 import re
 import sys
 import html
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from collections import defaultdict
 
 import requests
@@ -147,15 +147,22 @@ def make_index_xhtml(feeds, today_str, chapter_map):
     )
 
 
-def fetch_article_list(edition='delhi', target_date=None):
-    if target_date is None:
-        target_date = date.today()
-
+def _fetch_single_day(edition, target_date):
+    """Try to fetch one day's edition. Returns (feeds, today_str, cover_url) or None
+    if that day's edition isn't available (404, or no grouped_articles found)."""
     today_str = target_date.strftime('%Y-%m-%d')
     url = f'https://www.thehindu.com/todays-paper/{today_str}/th_{edition}/'
     print(f'Fetching index: {url}')
 
-    resp = requests.get(url, headers=HEADERS, timeout=30)
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=30)
+    except requests.RequestException as e:
+        print(f'  -> request failed: {e}')
+        return None
+
+    if resp.status_code == 404:
+        print(f'  -> 404, no edition published for {today_str}')
+        return None
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, 'html.parser')
 
@@ -186,10 +193,43 @@ def fetch_article_list(edition='delhi', target_date=None):
                     'page':   item.get('pageno', ''),
                 })
         total = sum(len(v) for v in feeds.values())
+        if total == 0:
+            print(f'  -> grouped_articles present but empty for {today_str}')
+            return None
         print(f'Found {total} articles across {len(feeds)} sections')
         return dict(feeds), today_str, cover_url
 
-    raise ValueError('Could not find grouped_articles — The Hindu may not have published today.')
+    print(f'  -> grouped_articles not found for {today_str}')
+    return None
+
+
+def fetch_article_list(edition='delhi', target_date=None, max_lookback_days=4):
+    """Fetch the latest available edition, starting at target_date (default: today,
+    in IST) and automatically stepping backward day-by-day if that edition isn't
+    up yet (e.g. workflow ran a few hours early/late, holiday, publishing delay).
+    This makes the fetch self-healing against GitHub Actions' unreliable cron
+    timing, instead of hard-failing whenever "today" isn't live yet."""
+    if target_date is None:
+        try:
+            from zoneinfo import ZoneInfo
+            target_date = datetime.now(ZoneInfo('Asia/Kolkata')).date()
+        except Exception:
+            target_date = date.today()
+
+    for offset in range(max_lookback_days + 1):
+        candidate = target_date - timedelta(days=offset)
+        result = _fetch_single_day(edition, candidate)
+        if result is not None:
+            if offset > 0:
+                print(f'Note: latest available edition is {offset} day(s) '
+                      f'behind the target date — using {result[1]}.')
+            return result
+
+    raise ValueError(
+        f'Could not find a published {edition} edition in the last '
+        f'{max_lookback_days + 1} days — The Hindu site may be down or '
+        f'restructured.'
+    )
 
 
 def fetch_cover(cover_url):
@@ -364,11 +404,17 @@ def build_epub(feeds, today_str, cover_url, edition='delhi'):
 
 
 if __name__ == '__main__':
-    edition     = sys.argv[1] if len(sys.argv) > 1 else 'delhi'
-    output_path = sys.argv[2] if len(sys.argv) > 2 else \
-                  f'hindu-{edition}-{date.today()}.epub'
+    edition = sys.argv[1] if len(sys.argv) > 1 else 'delhi'
 
     feeds, today_str, cover_url = fetch_article_list(edition)
     book = build_epub(feeds, today_str, cover_url, edition)
+
+    # If an explicit output path was given, use it as-is. Otherwise, always name
+    # the file after the *actual* edition date fetched (today_str), not the date
+    # the script happened to run on — these can differ if a fallback to an
+    # earlier available edition occurred.
+    output_path = sys.argv[2] if len(sys.argv) > 2 else \
+                  f'hindu-{edition}-{today_str}.epub'
+
     epub.write_epub(output_path, book)
-    print(f'\nSaved: {output_path}')
+    print(f'\nSaved: {output_path} (edition date: {today_str})')
