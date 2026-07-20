@@ -1,529 +1,61 @@
-#!/usr/bin/env python3
-"""
-fetch_hindu.py  –  Fetch The Hindu (print edition) and produce an EPUB.
-
-Primary path
-------------
-Scrape The Hindu's epaper/todays-paper site for the requested edition date.
-If that edition is not yet published (or fails to parse), fall back to the
-RSS fallback path below.
-
-RSS fallback path
------------------
-Pull the RSS feeds for each newspaper section and retain only articles whose
-publication date matches *yesterday* relative to the target date.  The number
-of articles kept per section is capped at the per-section average observed in
-a normal print edition so the EPUB does not balloon with web-only content.
-
-Usage
------
-    python scripts/fetch_hindu.py delhi [YYYY-MM-DD]
-
-If the date argument is omitted, today's IST date is used.  The output file is
-named  hindu-delhi-<EDITION-DATE>.epub  in the current directory.
-"""
-
-from __future__ import annotations
-
-import argparse
-import logging
-import re
-import sys
-import textwrap
-from dataclasses import dataclass, field
-from datetime import date, timedelta, datetime, timezone
-from email.utils import parsedate_to_datetime
-from io import BytesIO
-from typing import Optional
-from zoneinfo import ZoneInfo
-import xml.etree.ElementTree as ET
-
-import requests
-from bs4 import BeautifulSoup
-from ebooklib import epub
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger(__name__)
-
-IST = ZoneInfo("Asia/Kolkata")
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-IN,en;q=0.9",
-}
-TIMEOUT = 25  # seconds
-
-# ── Edition scraping ──────────────────────────────────────────────────────
-# The Hindu's todays-paper index URL pattern
-EDITION_INDEX_URL = "https://www.thehindu.com/todays-paper/"
-
-# Sections on the print edition page and their URL slugs
-# (order matters – becomes EPUB spine order)
-PRINT_SECTIONS = [
-    ("Front Page",      "tp-frontpage"),
-    ("National",        "tp-national"),
-    ("International",   "tp-international"),
-    ("Business",        "tp-business"),
-    ("Opinion",         "tp-opinion"),
-    ("Editorial",       "tp-opinion/tp-editorials"),
-    ("Letters",         "tp-opinion/tp-letters"),
-    ("Sport",           "tp-sports"),
-    ("Science",         "tp-sci-tech"),
-    ("Arts",            "tp-entertainment"),
-    ("Metro",           "tp-national/tp-otherstates"),
-]
-
-# ── RSS fallback ──────────────────────────────────────────────────────────
-# Each entry: (section_display_name, rss_url, avg_articles_in_print_edition)
-# Averages are empirically derived from a typical Delhi print edition:
-#   Front Page ~8, National ~10, International ~8, Business ~8,
-#   Opinion/Editorial ~5, Sport ~6, Sci-Tech ~4, Entertainment ~4
-RSS_SECTION_FEEDS: list[tuple[str, str, int]] = [
-    ("Front Page",    "https://www.thehindu.com/news/national/feeder/default.rss",         8),
-    ("National",      "https://www.thehindu.com/news/national/feeder/default.rss",        10),
-    ("International", "https://www.thehindu.com/news/international/feeder/default.rss",    8),
-    ("Business",      "https://www.thehindu.com/business/feeder/default.rss",              8),
-    ("Opinion",       "https://www.thehindu.com/opinion/feeder/default.rss",               5),
-    ("Editorial",     "https://www.thehindu.com/opinion/editorial/feeder/default.rss",     3),
-    ("Sport",         "https://www.thehindu.com/sport/feeder/default.rss",                 6),
-    ("Science",       "https://www.thehindu.com/sci-tech/feeder/default.rss",              4),
-    ("Arts",          "https://www.thehindu.com/entertainment/feeder/default.rss",         4),
-]
-
-
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
-@dataclass
-class Article:
-    title: str
-    url: str
-    summary: str = ""
-    body_html: str = ""
-    section: str = ""
-    byline: str = ""
-
-
-@dataclass
-class Section:
-    name: str
-    articles: list[Article] = field(default_factory=list)
-
-
-# ---------------------------------------------------------------------------
-# Network helpers
-# ---------------------------------------------------------------------------
-
-def fetch(url: str, *, as_xml: bool = False) -> Optional[requests.Response]:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-        return r
-    except requests.RequestException as exc:
-        log.warning("GET %s → %s", url, exc)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Primary path: scrape print edition
-# ---------------------------------------------------------------------------
-
-def _section_url(slug: str, edition_date: date) -> str:
-    """Return the URL for a section on a given date."""
-    d = edition_date.strftime("%Y-%m-%d")
-    return f"https://www.thehindu.com/todays-paper/{slug}/?date={d}"
-
-
-def scrape_article_body(url: str) -> tuple[str, str]:
-    """Return (byline, body_html) for an article URL.  Empty strings on failure."""
-    r = fetch(url)
-    if not r:
-        return "", ""
-    soup = BeautifulSoup(r.text, "lxml")
-
-    byline = ""
-    byline_tag = soup.select_one(".author-name, .byline, [class*='author']")
-    if byline_tag:
-        byline = byline_tag.get_text(strip=True)
-
-    body = soup.select_one(
-        "div.article-text, div.article-body, div[class*='ArticleBody'], "
-        "div[itemprop='articleBody'], div.story-element"
-    )
-    if body:
-        # Remove unwanted sub-elements
-        for tag in body.select("script, style, .share-page, .comments, .author-bio, "
-                               ".related-articles, .also-read, .tags"):
-            tag.decompose()
-        return byline, str(body)
-    return byline, ""
-
-
-def scrape_print_section(name: str, slug: str, edition_date: date) -> Section:
-    url = _section_url(slug, edition_date)
-    log.info("  Fetching section %-20s  %s", name, url)
-    r = fetch(url)
-    sec = Section(name=name)
-    if not r:
-        return sec
-
-    soup = BeautifulSoup(r.text, "lxml")
-
-    # The Hindu renders article lists with elements like:
-    #   <div class="other-article-no-image"> or <ul class="section-article-list">
-    # We try several selectors in preference order.
-    article_links: list[tuple[str, str]] = []
-
-    for a in soup.select(
-        "h3.title a, "
-        ".story-card-news a, "
-        ".other-article-no-image a, "
-        ".section-article-list li a, "
-        "h2.title a"
-    ):
-        href = a.get("href", "")
-        title = a.get_text(strip=True)
-        if href and title and href.startswith("http") and href not in {u for _, u in article_links}:
-            article_links.append((title, href))
-
-    for title, art_url in article_links:
-        byline, body = scrape_article_body(art_url)
-        sec.articles.append(Article(
-            title=title,
-            url=art_url,
-            section=name,
-            byline=byline,
-            body_html=body,
-        ))
-    log.info("    → %d articles", len(sec.articles))
-    return sec
-
-
-def try_primary_path(edition_date: date) -> list[Section]:
-    """Try to scrape the print edition for edition_date.
-    Returns a non-empty list of Sections on success, empty list on failure."""
-    log.info("PRIMARY PATH: scraping print edition for %s", edition_date)
-    sections: list[Section] = []
-    for display_name, slug in PRINT_SECTIONS:
-        sec = scrape_print_section(display_name, slug, edition_date)
-        if sec.articles:
-            sections.append(sec)
-
-    total = sum(len(s.articles) for s in sections)
-    log.info("Primary path: %d sections, %d total articles", len(sections), total)
-    return sections if total > 0 else []
-
-
-# ---------------------------------------------------------------------------
-# RSS fallback path
-# ---------------------------------------------------------------------------
-
-def _parse_rss_date(date_str: str) -> Optional[date]:
-    """Parse an RFC 2822 date string (standard RSS pubDate) to a date object."""
-    try:
-        dt = parsedate_to_datetime(date_str)
-        return dt.astimezone(IST).date()
-    except Exception:
-        pass
-    # Fallback: try ISO-8601
-    for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-        try:
-            dt = datetime.strptime(date_str.strip(), fmt)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(IST).date()
-        except ValueError:
-            continue
-    return None
-
-
-def _fetch_rss_items(feed_url: str, target_date: date) -> list[dict]:
-    """Download an RSS feed and return items published on target_date (IST)."""
-    r = fetch(feed_url)
-    if not r:
-        return []
-    try:
-        root = ET.fromstring(r.content)
-    except ET.ParseError as exc:
-        log.warning("RSS parse error for %s: %s", feed_url, exc)
-        return []
-
-    ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
-    items = []
-    for item in root.iter("item"):
-        pub_date_el = item.find("pubDate")
-        if pub_date_el is None or not pub_date_el.text:
-            continue
-        pub = _parse_rss_date(pub_date_el.text)
-        if pub != target_date:
-            continue
-
-        title_el = item.find("title")
-        link_el  = item.find("link")
-        desc_el  = item.find("description")
-        content_el = item.find("content:encoded", ns)
-
-        items.append({
-            "title":   (title_el.text  or "").strip() if title_el  is not None else "",
-            "url":     (link_el.text   or "").strip() if link_el   is not None else "",
-            "summary": BeautifulSoup(
-                            (desc_el.text or "") if desc_el is not None else "",
-                            "lxml"
-                       ).get_text(strip=True),
-            "body_html": (content_el.text or "") if content_el is not None else "",
-        })
-    return items
-
-
-def rss_fallback(fallback_date: date) -> list[Section]:
-    """
-    Build sections from RSS feeds filtered to fallback_date.
-    Each section is capped at its configured per-section average count so the
-    total article count stays in line with a normal print edition.
-    """
-    log.info("RSS FALLBACK PATH: fetching articles for %s", fallback_date)
-    seen_urls: set[str] = set()
-    sections: list[Section] = []
-
-    for section_name, feed_url, max_articles in RSS_SECTION_FEEDS:
-        log.info("  RSS section %-20s  cap=%d  %s", section_name, max_articles, feed_url)
-        raw_items = _fetch_rss_items(feed_url, fallback_date)
-
-        articles: list[Article] = []
-        for item in raw_items:
-            if len(articles) >= max_articles:
-                break
-            url = item["url"]
-            if not url or url in seen_urls:
-                continue
-            seen_urls.add(url)
-
-            body = item["body_html"]
-            # If the feed gives no full content, try scraping the article page
-            if not body:
-                _, body = scrape_article_body(url)
-
-            articles.append(Article(
-                title=item["title"],
-                url=url,
-                summary=item["summary"],
-                body_html=body,
-                section=section_name,
-            ))
-
-        log.info("    → %d / %d items kept (cap %d)",
-                 len(articles), len(raw_items), max_articles)
-        if articles:
-            sections.append(Section(name=section_name, articles=articles))
-
-    total = sum(len(s.articles) for s in sections)
-    log.info("RSS fallback: %d sections, %d total articles", len(sections), total)
-    return sections
-
-
-# ---------------------------------------------------------------------------
-# EPUB builder
-# ---------------------------------------------------------------------------
-
-_CSS = textwrap.dedent("""\
-    body  { font-family: Georgia, serif; line-height: 1.6; margin: 1em 1.5em; color: #111; }
-    h1    { font-size: 1.4em; border-bottom: 2px solid #c00; padding-bottom: .3em; }
-    h2    { font-size: 1.15em; margin-top: 1.8em; }
-    .meta { color: #666; font-size: .85em; margin-bottom: 1em; }
-    p     { margin: .6em 0; text-align: justify; }
-    .banner { background: #c00; color: #fff; padding: .4em .8em;
-              font-size: 1.6em; font-weight: bold; margin-bottom: .3em; }
-    .sub-banner { font-size: .95em; color: #555; margin-bottom: 1.5em; }
-    .section-header { font-size: 1.3em; font-weight: bold; color: #c00;
-                      border-bottom: 1px solid #c00; margin: 1.5em 0 .5em; }
-    .fallback-notice { background: #fff8dc; border: 1px solid #e0c000;
-                       padding: .5em .8em; border-radius: 4px;
-                       font-size: .9em; color: #555; margin-bottom: 1.2em; }
-""")
-
-
-def _safe_id(text: str) -> str:
-    return re.sub(r"[^a-z0-9_-]", "_", text.lower())[:50]
-
-
-def build_epub(
-    sections: list[Section],
-    edition_date: date,
-    output_path: str,
-    *,
-    is_fallback: bool = False,
-    fallback_date: Optional[date] = None,
-) -> None:
-    book = epub.EpubBook()
-    book.set_identifier(f"hindu-delhi-{edition_date.isoformat()}")
-    title = f"The Hindu – Delhi – {edition_date.strftime('%-d %b %Y')}"
-    book.set_title(title)
-    book.set_language("en")
-    book.add_author("The Hindu")
-
-    css_item = epub.EpubItem(
-        uid="style", file_name="style.css",
-        media_type="text/css", content=_CSS.encode()
-    )
-    book.add_item(css_item)
-
-    # ── Cover / title page ────────────────────────────────────────────────
-    fallback_notice_html = ""
-    if is_fallback and fallback_date:
-        fallback_notice_html = (
-            f'<p class="fallback-notice">'
-            f'<strong>Note:</strong> The {edition_date.strftime("%-d %b %Y")} print '
-            f'edition was not yet available. This EPUB contains articles from the RSS '
-            f'feeds dated {fallback_date.strftime("%-d %b %Y")}.'
-            f'</p>'
-        )
-
-    cover_html = textwrap.dedent(f"""\
-        <?xml version='1.0' encoding='utf-8'?>
-        <!DOCTYPE html>
-        <html xmlns="http://www.w3.org/1999/xhtml">
-        <head><title>{title}</title>
-        <link rel="stylesheet" href="style.css"/></head>
-        <body>
-        <div class="banner">The Hindu</div>
-        <div class="sub-banner">Delhi Edition &nbsp;·&nbsp; {edition_date.strftime('%-d %B %Y')}</div>
-        {fallback_notice_html}
-        <ul>
-        {"".join(f'<li><a href="sec_{_safe_id(s.name)}.xhtml">{s.name}</a></li>' for s in sections)}
-        </ul>
-        </body></html>
-    """)
-    cover = epub.EpubHtml(uid="cover", file_name="cover.xhtml", title="Contents")
-    cover.content = cover_html.encode()
-    cover.add_item(css_item)
-    book.add_item(cover)
-
-    spine: list = ["nav", cover]
-    toc_entries: list = []
-
-    # ── One chapter per section ───────────────────────────────────────────
-    for sec in sections:
-        sec_id = _safe_id(sec.name)
-        articles_html = []
-        for art in sec.articles:
-            meta = f'<p class="meta">'
-            if art.byline:
-                meta += f"By {art.byline} &nbsp;·&nbsp; "
-            meta += f'<a href="{art.url}">{art.url}</a></p>'
-            body = art.body_html or (f"<p>{art.summary}</p>" if art.summary else "<p>(No content)</p>")
-            articles_html.append(
-                f"<h2>{art.title}</h2>"
-                f"{meta}"
-                f"{body}"
-                "<hr/>"
-            )
-
-        chapter_html = textwrap.dedent(f"""\
-            <?xml version='1.0' encoding='utf-8'?>
-            <!DOCTYPE html>
-            <html xmlns="http://www.w3.org/1999/xhtml">
-            <head><title>{sec.name}</title>
-            <link rel="stylesheet" href="style.css"/></head>
-            <body>
-            <div class="section-header">{sec.name}</div>
-            {"".join(articles_html)}
-            </body></html>
-        """)
-        ch = epub.EpubHtml(uid=f"sec_{sec_id}", file_name=f"sec_{sec_id}.xhtml", title=sec.name)
-        ch.content = chapter_html.encode()
-        ch.add_item(css_item)
-        book.add_item(ch)
-        spine.append(ch)
-        toc_entries.append(epub.Link(f"sec_{sec_id}.xhtml", sec.name, f"sec_{sec_id}"))
-
-    book.toc = toc_entries
-    book.spine = spine
-    book.add_item(epub.EpubNcx())
-    book.add_item(epub.EpubNav())
-    epub.write_epub(output_path, book)
-    log.info("Wrote EPUB → %s", output_path)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Fetch The Hindu print edition as EPUB")
-    parser.add_argument("edition", choices=["delhi"], help="Edition to fetch")
-    parser.add_argument(
-        "date", nargs="?",
-        help="Target date YYYY-MM-DD (default: today IST)"
-    )
-    args = parser.parse_args()
-
-    if args.date:
-        try:
-            target_date = date.fromisoformat(args.date)
-        except ValueError:
-            sys.exit(f"Invalid date: {args.date!r}. Use YYYY-MM-DD.")
-    else:
-        target_date = datetime.now(IST).date()
-
-    log.info("Target date (IST): %s", target_date)
-
-    # ── Try primary path ──────────────────────────────────────────────────
-    sections = try_primary_path(target_date)
-    is_fallback = False
-    fallback_date: Optional[date] = None
-    edition_date = target_date
-
-    # ── RSS fallback if primary returned nothing ───────────────────────────
-    if not sections:
-        log.warning(
-            "Print edition for %s not available (or returned 0 articles). "
-            "Switching to RSS fallback for previous day.",
-            target_date,
-        )
-        fallback_date = target_date - timedelta(days=1)
-        sections = rss_fallback(fallback_date)
-        is_fallback = True
-        # edition_date stays as target_date so the output filename stays
-        # predictable for the workflow; the cover page notes it's RSS content.
-
-    if not sections:
-        sys.exit(
-            f"ERROR: Neither print edition for {target_date} nor RSS articles "
-            f"for {fallback_date} were available. Aborting."
-        )
-
-    # ── Write EPUB ────────────────────────────────────────────────────────
-    out_file = f"hindu-delhi-{edition_date.isoformat()}.epub"
-    build_epub(
-        sections,
-        edition_date,
-        out_file,
-        is_fallback=is_fallback,
-        fallback_date=fallback_date,
-    )
-    total = sum(len(s.articles) for s in sections)
-    log.info(
-        "Done. %s  [%d sections, %d articles%s]",
-        out_file,
-        len(sections),
-        total,
-        ", RSS fallback" if is_fallback else "",
-    )
-
-
-if __name__ == "__main__":
-    main()
+name: Fetch The Hindu (Delhi edition)
+
+on:
+  schedule:
+    # GitHub's `schedule` trigger is best-effort only — it is documented to be
+    # delayed or occasionally dropped during periods of high load, especially
+    # for lower-activity repos. A single daily slot means one missed/delayed
+    # run silently leaves the site a full day stale. Running several times
+    # through the morning window gives redundancy: if an earlier slot is
+    # skipped or late, a later one catches it the same day. The script itself
+    # is now idempotent/cheap to re-run (it just re-fetches whatever the
+    # latest published edition is), so extra runs cost a little CI time but
+    # cause no harm.
+    - cron: '30 2 * * *'   # 08:00 IST
+    - cron: '37 3 * * *'   # 09:07 IST (original slot)
+    - cron: '30 5 * * *'   # 11:00 IST
+    - cron: '00 7 * * *'
+    - cron: '30 9 * * *'   # 15:00 IST  (late safety net)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  fetch-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: pip install requests beautifulsoup4 "ebooklib==0.18" lxml
+
+      - name: Fetch The Hindu (Delhi edition)
+        env:
+          TZ: Asia/Kolkata
+        run: |
+          mkdir -p output
+          TODAY=$(TZ=Asia/Kolkata date +%Y-%m-%d)
+          DISPLAY_DATE=$(TZ=Asia/Kolkata date +'%-d %b %Y')
+          echo "Target date (IST): $TODAY"
+          # fetch_hindu.py auto-falls-back to the most recent published edition
+          # if today's isn't up yet, and names the output after the edition
+          # date it actually found — so EDITION_FILE below may differ from
+          # $TODAY if the run happened early/late relative to publication.
+          python scripts/fetch_hindu.py delhi
+          EDITION_FILE=$(ls -t hindu-delhi-*.epub | head -1)
+          mv "$EDITION_FILE" "output/${EDITION_FILE}"
+          cp "output/${EDITION_FILE}" output/hindu-delhi-latest.epub
+          sed "s/{{LAST_UPDATED}}/${DISPLAY_DATE}/" scripts/hindu-delhi-index.html > output/index.html
+          echo "Published edition file: ${EDITION_FILE}"
+          ls -lh output/
+
+      - name: Publish to GitHub Pages (gh-pages branch)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: gh-pages
+          folder: output
+          target-folder: hindu-delhi
+          clean: false
