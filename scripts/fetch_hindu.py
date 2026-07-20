@@ -8,8 +8,10 @@ import json
 import re
 import sys
 import html
-from datetime import date, datetime, timedelta
+import xml.etree.ElementTree as ET
+from datetime import date, datetime, timedelta, timezone
 from collections import defaultdict
+from email.utils import parsedate_to_datetime
 
 import requests
 from bs4 import BeautifulSoup
@@ -72,8 +74,9 @@ def make_xhtml(title, page, teaser, body, chapter_file):
     )
 
 
-def make_section_index_xhtml(feeds, today_str):
-    """Page 1 — high-level section index linking to anchors in the article index."""
+def make_section_index_xhtml(feeds, today_str, fallback_notice=''):
+    """Page 1 — high-level section index linking to anchors in the article index.
+    fallback_notice, if set, is rendered as a banner above the section list."""
     section_links = ''
     for section in feeds.keys():
         anchor = re.sub(r'\s+', '_', section)
@@ -81,6 +84,10 @@ def make_section_index_xhtml(feeds, today_str):
             f'<li><a href="article_index.xhtml#{html.escape(anchor)}">'
             f'{html.escape(section)}</a></li>'
         )
+    notice_html = (
+        f'<p style="background:#fff8dc;border:1px solid #e0c000;padding:0.4em 0.7em;'
+        f'border-radius:4px;font-size:small;color:#555;">{fallback_notice}</p>'
+    ) if fallback_notice else ''
     return (
         '<html xmlns="http://www.w3.org/1999/xhtml">'
         '<head>'
@@ -95,6 +102,7 @@ def make_section_index_xhtml(feeds, today_str):
         '<body>'
         f'<h1>The Hindu — Delhi, {html.escape(today_str)}</h1>'
         '<hr/>'
+        f'{notice_html}'
         '<ul>'
         f'{section_links}'
         '</ul>'
@@ -203,12 +211,130 @@ def _fetch_single_day(edition, target_date):
     return None
 
 
-def fetch_article_list(edition='delhi', target_date=None, max_lookback_days=4):
-    """Fetch the latest available edition, starting at target_date (default: today,
-    in IST) and automatically stepping backward day-by-day if that edition isn't
-    up yet (e.g. workflow ran a few hours early/late, holiday, publishing delay).
-    This makes the fetch self-healing against GitHub Actions' unreliable cron
-    timing, instead of hard-failing whenever "today" isn't live yet."""
+# ---------------------------------------------------------------------------
+# RSS fallback — used when the print edition is unavailable for all lookback
+# days (e.g. extended public holiday, site restructure).
+#
+# Each tuple: (section_display_name, rss_url, max_articles)
+# max_articles is the average per-section article count in a normal Delhi
+# print edition, so the RSS EPUB stays comparable in volume.
+# ---------------------------------------------------------------------------
+RSS_SECTION_FEEDS = [
+    ('Front Page',    'https://www.thehindu.com/news/national/feeder/default.rss',        8),
+    ('National',      'https://www.thehindu.com/news/national/feeder/default.rss',       10),
+    ('International', 'https://www.thehindu.com/news/international/feeder/default.rss',   8),
+    ('Business',      'https://www.thehindu.com/business/feeder/default.rss',             8),
+    ('Opinion',       'https://www.thehindu.com/opinion/feeder/default.rss',              5),
+    ('Editorial',     'https://www.thehindu.com/opinion/editorial/feeder/default.rss',    3),
+    ('Sport',         'https://www.thehindu.com/sport/feeder/default.rss',                6),
+    ('Science',       'https://www.thehindu.com/sci-tech/feeder/default.rss',             4),
+    ('Arts',          'https://www.thehindu.com/entertainment/feeder/default.rss',        4),
+]
+
+
+def _parse_rss_pubdate(date_str):
+    """Parse an RSS pubDate (RFC 2822) to a date in IST. Returns None on failure."""
+    try:
+        dt = parsedate_to_datetime(date_str)
+    except Exception:
+        return None
+    try:
+        from zoneinfo import ZoneInfo
+        return dt.astimezone(ZoneInfo('Asia/Kolkata')).date()
+    except Exception:
+        # Fallback: treat UTC offset naively
+        return dt.date()
+
+
+def _fetch_rss_section(section_name, feed_url, max_articles, target_date):
+    """Download one RSS feed and return up to max_articles items published on
+    target_date (compared in IST).  Returns a list of article dicts compatible
+    with the existing feeds dict format used by build_epub."""
+    print(f'  RSS [{section_name}] {feed_url}')
+    try:
+        resp = requests.get(feed_url, headers=HEADERS, timeout=30)
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f'    -> request failed: {e}')
+        return []
+
+    try:
+        root = ET.fromstring(resp.content)
+    except ET.ParseError as e:
+        print(f'    -> RSS parse error: {e}')
+        return []
+
+    articles = []
+    seen_urls = set()
+    for item in root.iter('item'):
+        if len(articles) >= max_articles:
+            break
+
+        pub_el = item.find('pubDate')
+        if pub_el is None or not pub_el.text:
+            continue
+        if _parse_rss_pubdate(pub_el.text) != target_date:
+            continue
+
+        title_el = item.find('title')
+        link_el  = item.find('link')
+        desc_el  = item.find('description')
+
+        title = (title_el.text or '').strip() if title_el is not None else ''
+        url   = (link_el.text  or '').strip() if link_el  is not None else ''
+        teaser_raw = (desc_el.text or '')     if desc_el  is not None else ''
+        teaser = BeautifulSoup(teaser_raw, 'html.parser').get_text(strip=True)
+
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+
+        articles.append({
+            'title':  title,
+            'url':    url,
+            'teaser': teaser,
+            'page':   '',   # RSS has no page number
+        })
+
+    kept = len(articles)
+    print(f'    -> {kept} article(s) kept (cap {max_articles}, target date {target_date})')
+    return articles
+
+
+def fetch_rss_fallback(target_date):
+    """Build a feeds dict from RSS for the day *before* target_date.
+    Returns (feeds, today_str, cover_url) in the same shape as _fetch_single_day,
+    or raises ValueError if no articles were found at all."""
+    fallback_date = target_date - timedelta(days=1)
+    fallback_str  = fallback_date.strftime('%Y-%m-%d')
+    print(f'\nPrint edition unavailable. Switching to RSS fallback for {fallback_str}.')
+
+    feeds = defaultdict(list)
+    seen_urls = set()
+
+    for section_name, feed_url, max_articles in RSS_SECTION_FEEDS:
+        articles = _fetch_rss_section(section_name, feed_url, max_articles, fallback_date)
+        # Deduplicate across sections (National and Front Page share the same feed)
+        unique = [a for a in articles if a['url'] not in seen_urls]
+        seen_urls.update(a['url'] for a in unique)
+        if unique:
+            feeds[section_name] = unique
+
+    total = sum(len(v) for v in feeds.values())
+    if total == 0:
+        raise ValueError(
+            f'RSS fallback also returned 0 articles for {fallback_str}. '
+            f'The Hindu site may be down or the feeds restructured.'
+        )
+
+    print(f'RSS fallback: {total} articles across {len(feeds)} sections for {fallback_str}')
+    return dict(feeds), fallback_str, None   # no cover image from RSS
+
+
+def fetch_article_list(edition='delhi', target_date=None, max_lookback_days=0):
+    """Fetch the print edition for target_date (default: today IST). If that
+    edition isn't available, falls back immediately to the RSS feeds for the
+    previous day — no lookback to earlier print editions."""
     if target_date is None:
         try:
             from zoneinfo import ZoneInfo
@@ -225,11 +351,8 @@ def fetch_article_list(edition='delhi', target_date=None, max_lookback_days=4):
                       f'behind the target date — using {result[1]}.')
             return result
 
-    raise ValueError(
-        f'Could not find a published {edition} edition in the last '
-        f'{max_lookback_days + 1} days — The Hindu site may be down or '
-        f'restructured.'
-    )
+    # All lookback days failed — fall back to RSS for the day before target_date.
+    return fetch_rss_fallback(target_date)
 
 
 def fetch_cover(cover_url):
@@ -315,7 +438,7 @@ def fetch_article_content(url, book, chapter_id):
         return f'<p><em>Failed to fetch article: {html.escape(str(e))}</em></p>'
 
 
-def build_epub(feeds, today_str, cover_url, edition='delhi'):
+def build_epub(feeds, today_str, cover_url, edition='delhi', fallback_notice=''):
     book = epub.EpubBook()
     book.set_identifier(f'thehindu-{edition}-{today_str}')
     display_date = datetime.strptime(today_str, '%Y-%m-%d').strftime('%-d %b %Y')
@@ -352,7 +475,7 @@ def build_epub(feeds, today_str, cover_url, edition='delhi'):
         file_name='section_index.xhtml',
         lang='en',
     )
-    section_index_page.content = make_section_index_xhtml(feeds, today_str)
+    section_index_page.content = make_section_index_xhtml(feeds, today_str, fallback_notice)
     section_index_page.add_item(style)
     book.add_item(section_index_page)
 
@@ -406,8 +529,29 @@ def build_epub(feeds, today_str, cover_url, edition='delhi'):
 if __name__ == '__main__':
     edition = sys.argv[1] if len(sys.argv) > 1 else 'delhi'
 
-    feeds, today_str, cover_url = fetch_article_list(edition)
-    book = build_epub(feeds, today_str, cover_url, edition)
+    try:
+        from zoneinfo import ZoneInfo
+        target_date = datetime.now(ZoneInfo('Asia/Kolkata')).date()
+    except Exception:
+        target_date = date.today()
+
+    feeds, today_str, cover_url = fetch_article_list(edition, target_date=target_date)
+
+    # Detect whether we ended up on the RSS fallback path:
+    # today_str will be yesterday's date relative to target_date.
+    fetched_date = datetime.strptime(today_str, '%Y-%m-%d').date()
+    is_rss_fallback = (fetched_date == target_date - timedelta(days=1) and cover_url is None)
+
+    fallback_notice = ''
+    if is_rss_fallback:
+        target_str = target_date.strftime('%-d %b %Y')
+        fallback_notice = (
+            f'Note: the print edition for {target_str} was not yet available. '
+            f'This issue contains articles from the RSS feeds dated {today_str}.'
+        )
+        print(f'RSS fallback active — notice: {fallback_notice}')
+
+    book = build_epub(feeds, today_str, cover_url, edition, fallback_notice=fallback_notice)
 
     # If an explicit output path was given, use it as-is. Otherwise, always name
     # the file after the *actual* edition date fetched (today_str), not the date
