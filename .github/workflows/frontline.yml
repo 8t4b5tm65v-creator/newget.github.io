@@ -26,18 +26,26 @@ jobs:
           DISPLAY_DATE=$(date +'%-d %b %Y')
           echo "Checking for new Frontline issue on: $DISPLAY_DATE"
 
-          # fetch_frontline.py now saves a dated file: frontline-YYYY-MM-DD.epub
+          # fetch_frontline.py now produces two output files:
+          #   frontline-<DATE>.epub  — the EPUB (unchanged)
+          #   frontline-<DATE>.html  — the HTML magazine reader
           # The date is derived from the issue label on the Frontline site
-          # (e.g. "June 20, 2025" → frontline-2025-06-20.epub).
+          # (e.g. "June 20, 2025" → frontline-2025-06-20).
           python scripts/fetch_frontline.py
 
           EDITION_FILE=$(ls -t frontline-*.epub | head -1)
+          READER_FILE="${EDITION_FILE%.epub}.html"
+
           mv "$EDITION_FILE" "output/${EDITION_FILE}"
+          mv "$READER_FILE"  "output/${READER_FILE}"
+
           cp "output/${EDITION_FILE}" output/frontline-latest.epub
+          cp "output/${READER_FILE}"  output/frontline-latest.html
 
           sed "s/{{LAST_UPDATED}}/${DISPLAY_DATE}/" scripts/frontline-index.html > output/index.html
 
-          echo "Published issue file: ${EDITION_FILE}"
+          echo "Published issue file:  ${EDITION_FILE}"
+          echo "Published reader file: ${READER_FILE}"
           ls -lh output/
 
       - name: Publish to GitHub Pages (gh-pages branch)

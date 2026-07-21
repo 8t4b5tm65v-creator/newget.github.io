@@ -1,39 +1,242 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>The Hindu — Delhi Edition</title>
+  <script>
+    (function() {
+      var s = localStorage.getItem('ng-theme');
+      var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (s === 'light') document.documentElement.classList.remove('dark');
+      else if (!s && !prefersDark) document.documentElement.classList.remove('dark');
+    })();
+  </script>
   <style>
-    body { font-family: Georgia, serif; max-width: 640px; margin: 3em auto; padding: 0 1.5em; color: #222; }
-    h1 { font-size: 1.6em; border-bottom: 1px solid #ddd; padding-bottom: 0.4em; }
-    h1 span { font-size: 0.55em; color: #555; font-weight: normal; display: block; margin-top: 0.2em; }
-    .download-btn {
-      display: inline-block; margin: 1.5em 0 0.5em;
-      padding: 0.7em 1.6em; background: #c0392b; color: #fff;
-      text-decoration: none; border-radius: 4px; font-size: 1em;
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Source+Serif+4:wght@300;400&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Dark (default) ── */
+    :root {
+      --bg:        #111110;
+      --surface:   #1c1b19;
+      --surface-h: #232220;
+      --border:    #2e2c28;
+      --border-h:  #3e3c38;
+      --ink:       #e8e4dc;
+      --muted:     #7a7670;
+      --accent:    #c0392b;
+      --accent-ink: #e06050;
+      --accent-tint: rgba(192,57,43,0.12);
     }
-    .download-btn:hover { background: #a93226; }
-    p.note { font-size: 0.85em; color: #555; margin-top: 0.4em; }
-    hr { border: none; border-top: 1px solid #ddd; margin: 2em 0; }
-    a.back { font-size: 0.9em; color: #555; text-decoration: none; }
-    a.back:hover { text-decoration: underline; }
+
+    /* ── Light ── */
+    html:not(.dark) {
+      --bg:        #f5f3ef;
+      --surface:   #ffffff;
+      --surface-h: #f9f7f4;
+      --border:    #d8d4cc;
+      --border-h:  #c0bbb2;
+      --ink:       #1a1a18;
+      --muted:     #918d85;
+      --accent:    #c0392b;
+      --accent-ink: #a02820;
+      --accent-tint: rgba(192,57,43,0.07);
+    }
+
+    html, body {
+      min-height: 100%;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: 'Source Serif 4', Georgia, serif;
+      -webkit-font-smoothing: antialiased;
+      transition: background 0.25s, color 0.25s;
+    }
+
+    .page {
+      max-width: 560px;
+      margin: 0 auto;
+      padding: 2rem 1.5rem 4rem;
+    }
+
+    /* ── Top bar ── */
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 3rem;
+    }
+    .back-link {
+      font-family: system-ui, sans-serif;
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-decoration: none;
+      letter-spacing: 0.02em;
+      transition: color 0.18s;
+    }
+    .back-link:hover { color: var(--ink); }
+
+    .theme-btn {
+      flex-shrink: 0;
+      width: 36px;
+      height: 20px;
+      border-radius: 10px;
+      border: 1.5px solid var(--border);
+      background: var(--surface);
+      cursor: pointer;
+      position: relative;
+      transition: background 0.25s, border-color 0.25s;
+      padding: 0;
+    }
+    .theme-btn::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      left: 2px;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: var(--muted);
+      transition: transform 0.25s, background 0.25s;
+    }
+    html.dark .theme-btn::after {
+      transform: translateX(16px);
+      background: var(--ink);
+    }
+
+    /* ── Masthead ── */
+    .masthead {
+      margin-bottom: 2.5rem;
+      padding-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+      transition: border-color 0.25s;
+    }
+    .eyebrow {
+      font-family: system-ui, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 0.5rem;
+    }
+    .wordmark {
+      font-family: 'Playfair Display', 'Times New Roman', serif;
+      font-size: 2.4rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      line-height: 1.1;
+      transition: color 0.25s;
+    }
+    .subtitle {
+      margin-top: 0.6rem;
+      font-family: system-ui, sans-serif;
+      font-size: 0.72rem;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      transition: color 0.25s;
+    }
+
+    .updated {
+      font-size: 0.85rem;
+      font-weight: 300;
+      color: var(--muted);
+      margin-bottom: 1.75rem;
+      transition: color 0.25s;
+    }
+    .updated strong { color: var(--ink); font-weight: 400; }
+
+    /* ── Buttons ── */
+    .btn-row {
+      display: flex;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+    }
+    .btn {
+      flex: 1;
+      min-width: 160px;
+      text-align: center;
+      display: inline-block;
+      padding: 0.85rem 1.2rem;
+      border-radius: 6px;
+      font-family: system-ui, sans-serif;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      letter-spacing: 0.01em;
+      transition: background 0.18s, border-color 0.18s, opacity 0.18s;
+    }
+    .btn-solid {
+      background: var(--accent);
+      color: #fdf9f4;
+      border: 1px solid var(--accent);
+    }
+    .btn-solid:hover { opacity: 0.88; }
+    .btn-outline {
+      background: var(--accent-tint);
+      color: var(--accent-ink);
+      border: 1px solid var(--accent);
+    }
+    .btn-outline:hover { background: var(--accent-tint); opacity: 0.8; }
+
+    hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2.5rem 0 1.5rem;
+      transition: border-color 0.25s;
+    }
+
+    .note {
+      font-size: 0.8rem;
+      font-weight: 300;
+      color: var(--muted);
+      line-height: 1.6;
+      transition: color 0.25s;
+    }
+    .note strong { color: var(--ink); font-weight: 400; }
   </style>
 </head>
 <body>
-  <a class="back" href="https://BRDSLYR.github.io/NewsGet/">← Home</a>
-  <h1>The Hindu — Delhi Edition
-    <span>Updated daily at 07:00 IST</span>
-  </h1>
-  <p class="note">Last updated: <strong>{{LAST_UPDATED}}</strong></p>
+  <div class="page">
 
-  <a class="download-btn"
-     href="https://BRDSLYR.github.io/NewsGet/hindu-delhi/hindu-delhi-latest.epub"
-     download="The Hindu - Delhi - {{LAST_UPDATED}}.epub">
-    Download Today's Edition
-  </a>
+    <div class="topbar">
+      <a class="back-link" href="https://BRDSLYR.github.io/NewsGet/">&larr; NewsGet</a>
+      <button class="theme-btn" id="theme-btn" onclick="toggleTheme()" aria-label="Toggle theme"></button>
+    </div>
 
-  <hr/>
-  <p class="note">To read on iPhone: tap the link above, then tap <strong>Share → Copy to Books</strong> (or open in your preferred EPUB reader).</p>
+    <header class="masthead">
+      <div class="eyebrow">The Hindu</div>
+      <div class="wordmark">Delhi Edition</div>
+      <p class="subtitle">Updated daily at 07:00 IST</p>
+    </header>
+
+    <p class="updated">Last updated: <strong>{{LAST_UPDATED}}</strong></p>
+
+    <div class="btn-row">
+      <a class="btn btn-solid"
+         href="hindu-delhi-latest.epub"
+         download="The Hindu - Delhi - {{LAST_UPDATED}}.epub">
+        Download EPUB
+      </a>
+      <a class="btn btn-outline" href="hindu-delhi-latest.html">
+        Read Online
+      </a>
+    </div>
+
+    <hr/>
+    <p class="note">To read on iPhone: tap <strong>Download EPUB</strong>, then tap <strong>Share &rarr; Copy to Books</strong> (or open in your preferred EPUB reader).</p>
+
+  </div>
+
+  <script>
+    function toggleTheme() {
+      var dark = document.documentElement.classList.toggle('dark');
+      localStorage.setItem('ng-theme', dark ? 'dark' : 'light');
+    }
+  </script>
 </body>
 </html>

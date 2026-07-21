@@ -625,7 +625,7 @@ def build_html_reader(feeds, today_str, article_bodies, fallback_notice=''):
 <title>The Hindu — Delhi — {html.escape(display_date)}</title>
 <script>
 (function(){{
-  var saved = localStorage.getItem('th-theme');
+  var saved = localStorage.getItem('ng-theme');
   var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   if (saved === 'dark' || (!saved && prefersDark)) document.documentElement.classList.add('dark');
 }})();
@@ -1009,7 +1009,7 @@ function syncThemeIcon() {{
 
 function toggleTheme() {{
   const dark = document.documentElement.classList.toggle('dark');
-  localStorage.setItem('th-theme', dark ? 'dark' : 'light');
+  localStorage.setItem('ng-theme', dark ? 'dark' : 'light');
   syncThemeIcon();
 }}
 
