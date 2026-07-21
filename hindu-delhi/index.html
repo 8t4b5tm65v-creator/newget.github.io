@@ -17,7 +17,6 @@
 
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    /* ── Dark (default) ── */
     :root {
       --bg:        #111110;
       --surface:   #1c1b19;
@@ -31,7 +30,6 @@
       --accent-tint: rgba(192,57,43,0.12);
     }
 
-    /* ── Light ── */
     html:not(.dark) {
       --bg:        #f5f3ef;
       --surface:   #ffffff;
@@ -60,7 +58,6 @@
       padding: 2rem 1.5rem 4rem;
     }
 
-    /* ── Top bar ── */
     .topbar {
       display: flex;
       align-items: center;
@@ -105,7 +102,6 @@
       background: var(--ink);
     }
 
-    /* ── Masthead ── */
     .masthead {
       margin-bottom: 2.5rem;
       padding-bottom: 1.5rem;
@@ -150,7 +146,6 @@
     }
     .updated strong { color: var(--ink); font-weight: 400; }
 
-    /* ── Buttons ── */
     .btn-row {
       display: flex;
       gap: 0.75rem;
@@ -214,12 +209,12 @@
       <p class="subtitle">Updated daily at 07:00 IST</p>
     </header>
 
-    <p class="updated">Last updated: <strong>21 Jul 2026</strong></p>
+    <p class="updated">Last updated: <strong>{{LAST_UPDATED}}</strong></p>
 
     <div class="btn-row">
       <a class="btn btn-solid"
          href="hindu-delhi-latest.epub"
-         download="The Hindu - Delhi - 21 Jul 2026.epub">
+         download="The Hindu - Delhi - {{LAST_UPDATED}}.epub">
         Download EPUB
       </a>
       <a class="btn btn-outline" href="hindu-delhi-latest.html">
