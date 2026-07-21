@@ -625,7 +625,7 @@ def build_html_reader(feeds, today_str, article_bodies, fallback_notice=''):
 <title>The Hindu — Delhi — {html.escape(display_date)}</title>
 <script>
 (function(){{
-  var saved = localStorage.getItem('ng-theme');
+  var saved = localStorage.getItem('th-theme');
   var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
   if (saved === 'dark' || (!saved && prefersDark)) document.documentElement.classList.add('dark');
 }})();
@@ -809,15 +809,15 @@ html, body {{
 /* ── Article pane ── */
 #article-pane {{
   position: fixed;
-  top: 52px; left: 0; right: 0; bottom: 0;
+  top: 0; left: 0; right: 0; bottom: 0;
   background: var(--paper);
   overflow-y: auto; overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   transform: translateX(100%);
   transition: transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   will-change: transform;
-  z-index: 50;
-  padding: 1.5rem 1.1rem 3rem;
+  z-index: 101;
+  padding: 4rem 1.1rem 3rem;
   max-width: 780px;
   margin: 0 auto;
 }}
@@ -879,7 +879,7 @@ html, body {{
 #blur-overlay {{
   position: fixed;
   top: 0; left: 0; right: 0; bottom: 0;
-  z-index: 49;
+  z-index: 98;
   backdrop-filter: blur(6px) brightness(0.85);
   -webkit-backdrop-filter: blur(6px) brightness(0.85);
   opacity: 0;
@@ -925,7 +925,7 @@ html, body {{
 @media (min-width: 700px) {{
   #article-pane {{
     left: 0; right: 0;
-    padding: 2rem 2.5rem 4rem;
+    padding: 4.5rem 2.5rem 4rem;
   }}
   .article-row {{
     grid-template-columns: 1fr;
@@ -1009,7 +1009,7 @@ function syncThemeIcon() {{
 
 function toggleTheme() {{
   const dark = document.documentElement.classList.toggle('dark');
-  localStorage.setItem('ng-theme', dark ? 'dark' : 'light');
+  localStorage.setItem('th-theme', dark ? 'dark' : 'light');
   syncThemeIcon();
 }}
 
