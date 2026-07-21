@@ -809,7 +809,7 @@ html, body {{
 /* ── Article pane ── */
 #article-pane {{
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 52px; left: 0; right: 0; bottom: 0;
   background: var(--paper);
   overflow-y: auto; overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
@@ -817,7 +817,7 @@ html, body {{
   transition: transform 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94);
   will-change: transform;
   z-index: 101;
-  padding: 4rem 1.1rem 3rem;
+  padding: 1.5rem 1.1rem 3rem;
   max-width: 780px;
   margin: 0 auto;
 }}
@@ -878,7 +878,7 @@ html, body {{
 /* ── Background blur overlay ── */
 #blur-overlay {{
   position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
+  top: 52px; left: 0; right: 0; bottom: 0;
   z-index: 98;
   backdrop-filter: blur(6px) brightness(0.85);
   -webkit-backdrop-filter: blur(6px) brightness(0.85);
@@ -925,7 +925,7 @@ html, body {{
 @media (min-width: 700px) {{
   #article-pane {{
     left: 0; right: 0;
-    padding: 4.5rem 2.5rem 4rem;
+    padding: 2rem 2.5rem 4rem;
   }}
   .article-row {{
     grid-template-columns: 1fr;
@@ -978,7 +978,7 @@ html, body {{
   <div id="pages-track" id="pages-track"></div>
 </div>
 
-<div id="blur-overlay"></div>
+<div id="blur-overlay" onclick="closeArticle()"></div>
 
 <div id="article-pane" aria-label="Article reader">
   <div class="art-pane-section" id="pane-section"></div>
@@ -1093,6 +1093,7 @@ function openArticle(aid) {{
   pane.scrollTop = 0;
   pane.style.transform = 'translateX(0)';
   document.getElementById('blur-overlay').style.opacity = '1';
+  document.getElementById('blur-overlay').style.pointerEvents = 'auto';
   articlePaneOpen = true;
   backBtn.style.display = 'flex';
   document.getElementById('section-nav').style.opacity = '0.4';
@@ -1103,6 +1104,7 @@ function openArticle(aid) {{
 function closeArticle() {{
   pane.style.transform = 'translateX(100%)';
   document.getElementById('blur-overlay').style.opacity = '0';
+  document.getElementById('blur-overlay').style.pointerEvents = 'none';
   articlePaneOpen = false;
   backBtn.style.display = 'none';
   document.getElementById('section-nav').style.opacity = '';
