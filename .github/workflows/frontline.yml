@@ -1,18 +1,15 @@
 name: Fetch Frontline (Current Issue)
-
 on:
   schedule:
-    # 12:00 IST on the 1st and 15th of each month = 01:30 UTC
+    # 12:00 IST on the 1st and 15th of each month = 06:30 UTC
     - cron: '30 4 1 * *'
     - cron: '30 4 15 * *'
     - cron: '30 4 7 * *'
     - cron: '30 4 21 * *'
     - cron: '30 4 30 * *'
   workflow_dispatch: {}
-
 permissions:
   contents: write
-
 jobs:
   fetch-and-publish:
     runs-on: ubuntu-latest
@@ -28,8 +25,19 @@ jobs:
           mkdir -p output
           DISPLAY_DATE=$(date +'%-d %b %Y')
           echo "Checking for new Frontline issue on: $DISPLAY_DATE"
-          python scripts/fetch_frontline.py "" "output/frontline-latest.epub"
+
+          # fetch_frontline.py now saves a dated file: frontline-YYYY-MM-DD.epub
+          # The date is derived from the issue label on the Frontline site
+          # (e.g. "June 20, 2025" → frontline-2025-06-20.epub).
+          python scripts/fetch_frontline.py
+
+          EDITION_FILE=$(ls -t frontline-*.epub | head -1)
+          mv "$EDITION_FILE" "output/${EDITION_FILE}"
+          cp "output/${EDITION_FILE}" output/frontline-latest.epub
+
           sed "s/{{LAST_UPDATED}}/${DISPLAY_DATE}/" scripts/frontline-index.html > output/index.html
+
+          echo "Published issue file: ${EDITION_FILE}"
           ls -lh output/
 
       - name: Publish to GitHub Pages (gh-pages branch)
