@@ -25,7 +25,7 @@
       --border:    #2e2c28;
       --border-h:  #3e3c38;
       --ink:       #e8e4dc;
-      --muted:     #7a7670;
+      --muted:     #a8a39c;
       --accent:    #1a7a6e;
       --accent-ink: #3ab5a4;
       --accent-tint: rgba(26,122,110,0.15);
@@ -39,7 +39,7 @@
       --border:    #d8d4cc;
       --border-h:  #c0bbb2;
       --ink:       #1a1a18;
-      --muted:     #918d85;
+      --muted:     #3d3a36;
       --accent:    #1a7a6e;
       --accent-ink: #0e6358;
       --accent-tint: rgba(26,122,110,0.09);
@@ -143,7 +143,7 @@
 
     .updated {
       font-size: 0.85rem;
-      font-weight: 300;
+      font-weight: 400;
       color: var(--muted);
       margin-bottom: 1.75rem;
       transition: color 0.25s;
@@ -192,13 +192,83 @@
 
     .note {
       font-size: 0.8rem;
-      font-weight: 300;
+      font-weight: 400;
       color: var(--muted);
       line-height: 1.6;
       transition: color 0.25s;
     }
     .note + .note { margin-top: 0.9rem; }
     .note strong { color: var(--ink); font-weight: 400; }
+
+    /* ── Archive ── */
+    .archive-heading {
+      font-family: system-ui, sans-serif;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 0.75rem;
+      transition: color 0.25s;
+    }
+    .archive-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .archive-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .archive-item:hover { background: var(--surface-h); border-color: var(--border-h); }
+    .archive-date {
+      font-family: system-ui, sans-serif;
+      font-size: 0.78rem;
+      font-weight: 400;
+      color: var(--ink);
+    }
+    .archive-links {
+      display: flex;
+      gap: 0.5rem;
+      flex-shrink: 0;
+    }
+    .archive-links a {
+      font-family: system-ui, sans-serif;
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-decoration: none;
+      padding: 3px 8px;
+      border-radius: 4px;
+      transition: opacity 0.15s;
+    }
+    .archive-links a:hover { opacity: 0.75; }
+    .arch-epub {
+      background: var(--accent);
+      color: #f4fdfb;
+    }
+    .arch-read {
+      background: var(--accent-tint);
+      color: var(--accent-ink);
+      border: 1px solid var(--accent);
+    }
+    .archive-loading {
+      font-family: system-ui, sans-serif;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+    .archive-error {
+      font-family: system-ui, sans-serif;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
   </style>
 </head>
 <body>
@@ -232,6 +302,12 @@
     <p class="note">To read on iPhone: tap <strong>Download EPUB</strong>, then tap <strong>Share &rarr; Copy to Books</strong> (or open in your preferred EPUB reader).</p>
     <p class="note">Frontline publishes fortnightly. If a new issue has not yet appeared on their website on the 1st or 15th, the previous issue will remain available here until the next check.</p>
 
+    <hr/>
+    <p class="archive-heading">Previous Issues</p>
+    <div id="archive-container">
+      <p class="archive-loading">Loading archive&hellip;</p>
+    </div>
+
   </div>
 
   <script>
@@ -239,6 +315,108 @@
       var dark = document.documentElement.classList.toggle('dark');
       localStorage.setItem('ng-theme', dark ? 'dark' : 'light');
     }
+
+    // Parse YYYY-MM-DD from filename like "frontline-2025-06-20.epub"
+    function parseDateSlug(name) {
+      var m = name.match(/frontline-(\d{4}-\d{2}-\d{2})\.epub$/);
+      return m ? m[1] : null;
+    }
+
+    // Format "2025-06-20" → "20 Jun 2025"
+    function formatDate(slug) {
+      var parts = slug.split('-');
+      var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      return parseInt(parts[2], 10) + ' ' + months[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+    }
+
+    function loadArchive() {
+      var BASE = 'https://BRDSLYR.github.io/NewsGet/frontline/';
+      var API  = 'https://api.github.com/repos/BRDSLYR/NewsGet/contents/?ref=gh-pages';
+      // We need the frontline folder contents
+      var API_FOLDER = 'https://api.github.com/repos/BRDSLYR/NewsGet/contents/frontline?ref=gh-pages';
+
+      fetch(API_FOLDER)
+        .then(function(r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function(files) {
+          var issues = files
+            .map(function(f) { return f.name; })
+            .filter(function(n) { return /^frontline-\d{4}-\d{2}-\d{2}\.epub$/.test(n); })
+            .map(function(n) { return parseDateSlug(n); })
+            .filter(Boolean)
+            .sort()
+            .reverse()
+            // Skip the most recent — already shown as "latest" above
+            .slice(1);
+
+          var container = document.getElementById('archive-container');
+
+          if (issues.length === 0) {
+            container.innerHTML = '<p class="archive-error">No previous issues found yet.</p>';
+            return;
+          }
+
+          var ul = document.createElement('ul');
+          ul.className = 'archive-list';
+
+          // Build all list items first, then check HTML availability in parallel
+          var items = issues.map(function(slug) {
+            var displayDate = formatDate(slug);
+            var epubUrl = BASE + 'frontline-' + slug + '.epub';
+            var htmlUrl  = BASE + 'frontline-' + slug + '.html';
+
+            var li = document.createElement('li');
+            li.className = 'archive-item';
+
+            var dateSpan = '<span class="archive-date">' + displayDate + '</span>';
+            var epubBtn  = '<a class="arch-epub" href="' + epubUrl + '" download="Frontline - ' + displayDate + '.epub">EPUB</a>';
+
+            // Placeholder span for the Read button — filled in after HEAD check
+            li.innerHTML = dateSpan +
+              '<div class="archive-links" id="arch-links-' + slug + '">' +
+                epubBtn +
+                '<span class="arch-checking" style="font-size:0.65rem;color:var(--muted)">…</span>' +
+              '</div>';
+            ul.appendChild(li);
+
+            // HEAD request to check if HTML reader exists
+            return fetch(htmlUrl, { method: 'HEAD' })
+              .then(function(r) {
+                var linksEl = document.getElementById('arch-links-' + slug);
+                if (!linksEl) return;
+                // Remove the checking placeholder
+                var checking = linksEl.querySelector('.arch-checking');
+                if (checking) checking.remove();
+                if (r.ok) {
+                  var readBtn = document.createElement('a');
+                  readBtn.className = 'arch-read';
+                  readBtn.href = htmlUrl;
+                  readBtn.textContent = 'Read';
+                  linksEl.appendChild(readBtn);
+                }
+              })
+              .catch(function() {
+                // Network error — just remove the placeholder
+                var linksEl = document.getElementById('arch-links-' + slug);
+                if (linksEl) {
+                  var checking = linksEl.querySelector('.arch-checking');
+                  if (checking) checking.remove();
+                }
+              });
+          });
+
+          container.innerHTML = '';
+          container.appendChild(ul);
+        })
+        .catch(function(err) {
+          document.getElementById('archive-container').innerHTML =
+            '<p class="archive-error">Could not load archive. <a href="https://github.com/BRDSLYR/NewsGet/tree/gh-pages/frontline" style="color:var(--accent)">Browse on GitHub</a>.</p>';
+        });
+    }
+
+    loadArchive();
   </script>
 </body>
 </html>
