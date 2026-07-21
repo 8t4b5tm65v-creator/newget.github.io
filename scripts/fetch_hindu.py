@@ -826,9 +826,9 @@ html, body {{
 /* ── Article pane — floating card ── */
 #article-pane {{
   position: fixed;
-  top: 72px; left: 50%; bottom: 24px;
+  top: 58px; left: 50%; bottom: 12px;
   transform: translateX(-50%) scale(0.96);
-  width: min(780px, calc(100vw - 2rem));
+  width: min(900px, calc(100vw - 1rem));
   background: var(--paper);
   border-radius: 12px;
   overflow-y: auto; overflow-x: hidden;
@@ -917,8 +917,8 @@ html, body {{
 /* ── PiP card ── */
 #pip-card {{
   position: fixed;
-  bottom: 20px; right: 20px;
-  width: 260px;
+  bottom: 14px; right: 14px;
+  width: 200px;
   background: var(--paper);
   border-radius: 10px;
   border: 1px solid var(--rule);
@@ -938,26 +938,26 @@ html, body {{
   background: var(--ink); padding: 7px 10px;
   display: flex; align-items: center; justify-content: space-between;
 }}
-.pip-logo {{ font-family: var(--font-head); font-size: 0.75rem; font-weight: 700; color: var(--paper); }}
+.pip-logo {{ font-family: var(--font-head); font-size: 0.68rem; font-weight: 700; color: var(--paper); }}
 .pip-close {{
   background: none; border: none; color: #aaa; cursor: pointer;
   padding: 2px; display: flex; align-items: center; border-radius: 3px;
   transition: color 0.15s;
 }}
 .pip-close:hover {{ color: var(--paper); }}
-.pip-body {{ padding: 10px 12px 12px; }}
+.pip-body {{ padding: 8px 10px 10px; }}
 .pip-sec {{
   font-family: var(--font-ui); font-size: 0.58rem; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.08em;
   color: var(--red); margin-bottom: 4px;
 }}
 .pip-title {{
-  font-family: var(--font-head); font-size: 0.8rem; font-weight: 700;
+  font-family: var(--font-head); font-size: 0.72rem; font-weight: 700;
   line-height: 1.3; color: var(--ink);
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
-  margin-bottom: 5px;
+  margin-bottom: 4px;
 }}
-.pip-hint {{ font-family: var(--font-ui); font-size: 0.62rem; color: var(--ink-faint); }}
+.pip-hint {{ font-family: var(--font-ui); font-size: 0.58rem; color: var(--ink-faint); }}
 
 /* ── Fallback notice ── */
 .fallback-notice {{
