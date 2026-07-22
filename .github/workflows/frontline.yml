@@ -1,0 +1,92 @@
+name: Fetch Frontline (Current Issue)
+on:
+  schedule:
+    - cron: '30 4 1 * *'
+    - cron: '30 4 15 * *'
+    - cron: '30 4 7 * *'
+    - cron: '30 4 21 * *'
+    - cron: '30 4 30 * *'
+  workflow_dispatch: {}
+permissions:
+  contents: write
+jobs:
+  fetch-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          # Also fetch gh-pages so we can inspect what's already deployed
+          fetch-depth: 0
+
+      - name: Install Python dependencies
+        run: pip install requests beautifulsoup4 "ebooklib==0.18" lxml
+
+      - name: Check existing issue slug on gh-pages
+        id: existing
+        run: |
+          # Find the most recently deployed frontline-*.epub on gh-pages.
+          # Its filename encodes the vol/iss slug we compare against.
+          EXISTING_SLUG=""
+          if git ls-remote --exit-code origin gh-pages > /dev/null 2>&1; then
+            git fetch origin gh-pages --depth=1 2>/dev/null || true
+            EXISTING_FILE=$(git ls-tree -r --name-only origin/gh-pages \
+              | grep '^frontline/frontline-.*-vol[0-9]*-iss[0-9]*\.epub$' \
+              | sort | tail -1)
+            if [ -n "$EXISTING_FILE" ]; then
+              # Extract slug from filename: frontline/frontline-SLUG.epub → SLUG
+              BASENAME=$(basename "$EXISTING_FILE" .epub)
+              EXISTING_SLUG="${BASENAME#frontline-}"
+              echo "Existing slug on gh-pages: $EXISTING_SLUG"
+            else
+              echo "No existing vol/iss-named issue found on gh-pages."
+            fi
+          else
+            echo "gh-pages branch does not exist yet."
+          fi
+          echo "slug=$EXISTING_SLUG" >> $GITHUB_OUTPUT
+
+      - name: Fetch Frontline (current issue)
+        id: fetch
+        env:
+          EXISTING_SLUG: ${{ steps.existing.outputs.slug }}
+        run: |
+          mkdir -p output
+          DISPLAY_DATE=$(date +'%-d %b %Y')
+          echo "Checking for new Frontline issue. Existing slug: ${EXISTING_SLUG:-none}"
+
+          python scripts/fetch_frontline.py
+
+          # Script writes DUPLICATE file if same issue; ISSUE_SLUG file otherwise
+          if [ -f DUPLICATE ]; then
+            echo "Duplicate issue detected — skipping deploy."
+            echo "is_duplicate=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          SLUG=$(cat ISSUE_SLUG)
+          EDITION_FILE="frontline-${SLUG}.epub"
+          READER_FILE="frontline-${SLUG}.html"
+
+          mv "$EDITION_FILE" "output/${EDITION_FILE}"
+          mv "$READER_FILE"  "output/${READER_FILE}"
+
+          cp "output/${EDITION_FILE}" output/frontline-latest.epub
+          cp "output/${READER_FILE}"  output/frontline-latest.html
+
+          sed "s/{{LAST_UPDATED}}/${DISPLAY_DATE}/" scripts/frontline-index.html > output/index.html
+
+          echo "Published EPUB:   ${EDITION_FILE}"
+          echo "Published reader: ${READER_FILE}"
+          echo "is_duplicate=false" >> $GITHUB_OUTPUT
+          ls -lh output/
+
+      - name: Publish to GitHub Pages (gh-pages branch)
+        if: steps.fetch.outputs.is_duplicate != 'true'
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: gh-pages
+          folder: output
+          target-folder: frontline
+          clean: false
