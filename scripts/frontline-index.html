@@ -316,17 +316,22 @@
       localStorage.setItem('ng-theme', dark ? 'dark' : 'light');
     }
 
-    // Parse YYYY-MM-DD from filename like "frontline-2025-06-20.epub"
-    function parseDateSlug(name) {
-      var m = name.match(/frontline-(\d{4}-\d{2}-\d{2})\.epub$/);
+    // Parse slug from filename like "frontline-2025-06-20-vol42-iss13.epub"
+    function parseSlug(name) {
+      var m = name.match(/frontline-(\d{4}-\d{2}-\d{2}-vol\d+-iss\d+)\.epub$/);
       return m ? m[1] : null;
     }
 
-    // Format "2025-06-20" → "20 Jun 2025"
-    function formatDate(slug) {
-      var parts = slug.split('-');
+    // Format slug "2025-06-20-vol42-iss13" → "20 Jun 2025 · Vol 42 Iss 13"
+    function formatSlug(slug) {
+      var dm = slug.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      var vm = slug.match(/vol(\d+)-iss(\d+)/);
       var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-      return parseInt(parts[2], 10) + ' ' + months[parseInt(parts[1], 10) - 1] + ' ' + parts[0];
+      var datePart = dm
+        ? parseInt(dm[3], 10) + ' ' + months[parseInt(dm[2], 10) - 1] + ' ' + dm[1]
+        : slug;
+      var issPart = vm ? ' · Vol ' + vm[1] + ' Iss ' + vm[2] : '';
+      return datePart + issPart;
     }
 
     function loadArchive() {
@@ -343,8 +348,8 @@
         .then(function(files) {
           var issues = files
             .map(function(f) { return f.name; })
-            .filter(function(n) { return /^frontline-\d{4}-\d{2}-\d{2}\.epub$/.test(n); })
-            .map(function(n) { return parseDateSlug(n); })
+            .filter(function(n) { return /^frontline-\d{4}-\d{2}-\d{2}-vol\d+-iss\d+\.epub$/.test(n); })
+            .map(function(n) { return parseSlug(n); })
             .filter(Boolean)
             .sort()
             .reverse()
@@ -363,15 +368,15 @@
 
           // Build all list items first, then check HTML availability in parallel
           var items = issues.map(function(slug) {
-            var displayDate = formatDate(slug);
+            var displayLabel = formatSlug(slug);
             var epubUrl = BASE + 'frontline-' + slug + '.epub';
             var htmlUrl  = BASE + 'frontline-' + slug + '.html';
 
             var li = document.createElement('li');
             li.className = 'archive-item';
 
-            var dateSpan = '<span class="archive-date">' + displayDate + '</span>';
-            var epubBtn  = '<a class="arch-epub" href="' + epubUrl + '" download="Frontline - ' + displayDate + '.epub">EPUB</a>';
+            var dateSpan = '<span class="archive-date">' + displayLabel + '</span>';
+            var epubBtn  = '<a class="arch-epub" href="' + epubUrl + '" download="Frontline - ' + displayLabel + '.epub">EPUB</a>';
 
             // Placeholder span for the Read button — filled in after HEAD check
             li.innerHTML = dateSpan +
