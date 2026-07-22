@@ -62,32 +62,45 @@ def sanitize(content):
     return content or '<p><em>Content not available.</em></p>'
 
 
-def issue_label_to_date_slug(issue_label):
-    """Convert Frontline's issue label to a YYYY-MM-DD slug for the filename.
+def issue_label_to_slug(issue_label):
+    """Convert Frontline's issue label to a canonical slug for filenames.
 
     Frontline labels look like:
       "Volume 42, Issue 13 | June 20, 2025"
       "Volume 41, Issue 1 | January 6, 2024"
-    We parse the date portion after the pipe.  Falls back to today's date
-    in YYYY-MM-DD if parsing fails.
+
+    Returns: "2025-06-20-vol42-iss13"
+    This uniquely identifies an issue by both its publish date and its
+    volume/issue number, preventing duplicate downloads on re-runs.
+    Falls back to "YYYY-MM-DD-vol0-iss0" using today's date if parsing fails.
     """
     try:
-        # Take the part after the pipe if present, else the whole string
+        vol_m   = re.search(r'[Vv]olume\s+(\d+)', issue_label)
+        iss_m   = re.search(r'[Ii]ssue\s+(\d+)', issue_label)
         date_part = issue_label.split('|')[-1].strip()
-        # Expect "Month D, YYYY" or "Month DD, YYYY"
-        m = re.search(
-            r'([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})',
-            date_part
-        )
-        if m:
-            month_name, day, year = m.group(1).lower(), int(m.group(2)), int(m.group(3))
-            month_num = _MONTHS.get(month_name[:3])
-            if month_num:
-                return f'{year}-{month_num:02d}-{day:02d}'
+        date_m  = re.search(r'([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})', date_part)
+
+        vol = int(vol_m.group(1)) if vol_m else 0
+        iss = int(iss_m.group(1)) if iss_m else 0
+
+        if date_m:
+            month_name = date_m.group(1).lower()
+            day   = int(date_m.group(2))
+            year  = int(date_m.group(3))
+            month = _MONTHS.get(month_name[:3], 0)
+            if month:
+                return f'{year}-{month:02d}-{day:02d}-vol{vol}-iss{iss}'
     except Exception:
         pass
-    # Fallback
-    return date.today().strftime('%Y-%m-%d')
+    return f'{date.today().strftime("%Y-%m-%d")}-vol0-iss0'
+
+
+def slug_to_vol_iss(slug):
+    """Extract (vol, iss) integers from a slug like "2025-06-20-vol42-iss13"."""
+    m = re.search(r'vol(\d+)-iss(\d+)', slug)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
 
 
 def make_xhtml(title, description, body, chapter_file):
@@ -812,10 +825,29 @@ if __name__ == '__main__':
     issue = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else None
 
     feeds, issue_label, cover_url = fetch_article_list(issue)
-    date_slug = issue_label_to_date_slug(issue_label)
-    dated_path = f'frontline-{date_slug}.epub'
+    slug = issue_label_to_slug(issue_label)
+    vol, iss = slug_to_vol_iss(slug)
 
-    # ── Fetch all article bodies once; share between EPUB and HTML reader ──
+    print(f'\nIssue label : {issue_label}')
+    print(f'Slug        : {slug}')
+    print(f'Volume/Issue: vol{vol} iss{iss}')
+
+    # ── Duplicate detection ──────────────────────────────────────────────
+    # The workflow passes EXISTING_SLUG (the vol/iss of the last deployed
+    # issue) via an environment variable. If it matches, we exit cleanly
+    # so the workflow skips the deploy step entirely.
+    import os
+    existing_slug = os.environ.get('EXISTING_SLUG', '')
+    if existing_slug:
+        ex_vol, ex_iss = slug_to_vol_iss(existing_slug)
+        if ex_vol is not None and ex_vol == vol and ex_iss == iss:
+            print(f'\nSame issue already published ({existing_slug}). Nothing to do.')
+            # Signal to workflow that this is a duplicate
+            with open('DUPLICATE', 'w') as f:
+                f.write(existing_slug)
+            sys.exit(0)
+
+    # ── Fetch all article bodies once ────────────────────────────────────
     print('\nFetching article content...')
     temp_book = epub.EpubBook()
     epub_bodies = {}
@@ -828,7 +860,7 @@ if __name__ == '__main__':
             epub_bodies[art['url']] = epub_body
             html_bodies[art['url']] = html_body
 
-    # ── Cover image: base64 for HTML reader ──
+    # ── Cover image ──────────────────────────────────────────────────────
     cover_b64 = None
     cover_mime = 'image/jpeg'
     if cover_url:
@@ -837,19 +869,24 @@ if __name__ == '__main__':
             cover_b64 = _base64.b64encode(cover_bytes).decode('ascii')
             cover_mime = cover_mime_dl or 'image/jpeg'
 
-    # ── Build EPUB ──
+    # ── Build EPUB ───────────────────────────────────────────────────────
+    epub_path = f'frontline-{slug}.epub'
     book = build_epub(feeds, issue_label, cover_url,
                       prefetched_bodies=epub_bodies,
                       prefetched_book=temp_book)
-    epub.write_epub(dated_path, book)
-    print(f'\nSaved EPUB: {dated_path}')
+    epub.write_epub(epub_path, book)
+    print(f'\nSaved EPUB: {epub_path}')
 
-    # ── Build HTML reader ──
-    html_path = f'frontline-{date_slug}.html'
+    # ── Build HTML reader ────────────────────────────────────────────────
+    html_path = f'frontline-{slug}.html'
     html_content = build_html_reader(feeds, issue_label, html_bodies,
                                      cover_image_b64=cover_b64,
                                      cover_mime=cover_mime)
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     print(f'Saved HTML reader: {html_path}')
-    print(f'\nIssue: {issue_label}')
+
+    # Write slug to file so workflow can read it
+    with open('ISSUE_SLUG', 'w') as f:
+        f.write(slug)
+    print(f'\nSlug written: {slug}')
